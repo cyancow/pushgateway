@@ -108,11 +108,28 @@ func main() {
 	r.Get(*routePrefix+"/-/healthy", handler.Healthy(ms).ServeHTTP)
 	r.Get(*routePrefix+"/-/ready", handler.Ready(ms).ServeHTTP)
 	r.Get(
-		path.Join(*routePrefix, *metricsPath),
-		promhttp.HandlerFor(g, promhttp.HandlerOpts{
-			ErrorLog: logFunc(level.Error(logger).Log),
-		}).ServeHTTP,
-	)
+		path.Join(*routePrefix, *metricsPath), func(w http.ResponseWriter, r *http.Request) {
+
+			promhttp.HandlerFor(g, promhttp.HandlerOpts{
+				ErrorLog: logFunc(level.Error(logger).Log),
+			}).ServeHTTP(w, r)
+
+			go func() {
+				params := r.URL.Query()
+				wipe := params.Get("wipe")
+
+				if wipe == "true" {
+					level.Debug(logger).Log("msg", "start wiping metric store")
+					// Delete all metric groups by sending write requests with MetricFamilies equal to nil.
+					for _, group := range ms.GetMetricFamiliesMap() {
+						ms.SubmitWriteRequest(storage.WriteRequest{
+							Labels:    group.Labels,
+							Timestamp: time.Now(),
+						})
+					}
+				}
+			}()
+		})
 
 	// Handlers for pushing and deleting metrics.
 	pushAPIPath := *routePrefix + "/metrics"
